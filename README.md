@@ -1,65 +1,72 @@
-# Voicify
+<p align="center"><img src="assets/voicify.svg" width="96" height="96" alt="Voicify fox wearing a top hat and moustache"></p>
 
-**A local voice studio for Linux.**
+<h1 align="center">Voicify</h1>
 
-Turn a physical mic into a single virtual microphone for Discord, OBS, browsers, and games. Use Direct for your regular voice, Convert for an RVC voice, or Mute to stop capture. The audio engine stays active when you close the studio.
+<p align="center">A voice studio for Linux. One virtual mic for calls, recording, and games.</p>
 
-## Install on Fedora
+<p align="center">
+  <a href="https://github.com/aronyok-io/Voicify/releases/latest"><strong>↓ Download for Fedora</strong></a>
+  · <a href="#voice-models">Voice models</a>
+  · <a href="docs/engineering.md">How it works</a>
+</p>
 
-Install the RPM for Fedora x86-64, then open **Voicify** from your app menu.
+<p align="center"><img src="assets/studio.webp" width="840" alt="Voicify Studio in black and red, with controls for the virtual mic, noise cleanup, and voice conversion"></p>
 
-```bash
-sudo dnf install ./voicify-1.0.0-1.fc44.x86_64.rpm
-```
+## Get on the mic
 
-The first launch asks you to choose CPU or NVIDIA CUDA and downloads the Python runtime into your user account. To change engines later, stop audio and run `voicify setup cpu` or `voicify setup cuda`.
+1. Download the Fedora 44 x86-64 RPM from [Releases](https://github.com/aronyok-io/Voicify/releases/latest).
+2. Install it from the download directory.
 
-Voices you imported before installing are still in your library. For a fresh setup, import compatible ONNX graphs or put the demo pack in `${XDG_DATA_HOME:-$HOME/.local/share}/voicify/demo-assets` and click **Add demo voices**. See [voice formats](docs/models.md).
+   ```bash
+   sudo dnf install ./voicify-1.0.0-1.fc44.x86_64.rpm
+   ```
 
-To remove the app, stop audio and run `sudo dnf remove voicify`. Your models, settings and runtime stay in your home directory.
+3. Open **Voicify** from your app menu and choose **CPU** or **NVIDIA CUDA**. First launch downloads the runtime into your user account.
+4. Click **Start audio**, choose **Direct** to check your mic, and select **Voicify Virtual Microphone** in Discord, OBS, or your game.
 
-## Run from source
+Use **Record preview** with headphones to hear what the virtual mic sends. Studio records four seconds, plays the clip once, and discards it.
 
-Voicify uses PipeWire, WirePlumber, Pulse compatibility, and the Fedora PySide6 package. The inference environment uses Python 3.12 through `uv`.
+## In Studio
+
+| Control | What it does |
+| --- | --- |
+| **Direct** | Pass your mic through with optional echo cancellation and noise filtering. |
+| **Convert** | Change your voice locally with an RVC ONNX model on CPU or NVIDIA CUDA. |
+| **Mute** | Stop mic capture while keeping the virtual mic available to other apps. |
+| **Stop audio** | End the audio engine and remove the virtual mic. Closing the Studio window leaves the engine running. |
+
+## Voice models
+
+Use **Import ONNX** to add a compatible RVC voice and ContentVec or HuBERT encoder. Set the sample rate and speaker ID to match the model. The Fedora download includes the app and installs its runtime on first launch. Bring your own ONNX graphs, or put the optional demo files in `${XDG_DATA_HOME:-$HOME/.local/share}/voicify/demo-assets` and choose **Add demo voices**. See the [model guide](docs/models.md) for supported formats and checksums.
+
+<details>
+<summary>Runtime and uninstall</summary>
+
+Stop audio before switching engines with `voicify setup cpu` or `voicify setup cuda`. The CUDA runtime uses CUDA 12 and cuDNN 9 wheels and needs a working NVIDIA driver. Auto falls back to CPU if CUDA cannot initialize.
+
+Stop audio before running `sudo dnf remove voicify`. Your settings, imported graphs, and runtime stay in your user account. Voicify uses standard XDG paths. The engine log is in `${XDG_STATE_HOME:-$HOME/.local/state}/voicify/engine.log`.
+
+</details>
+
+<details>
+<summary>Run from source, test, or build the RPM</summary>
+
+Install Fedora’s `python3-pyside6`, `pipewire-utils`, `pipewire-pulseaudio`, `pulseaudio-utils`, `wireplumber`, and `uv` packages.
 
 ```bash
 ./setup cpu
 ./launch
 ```
 
-Use `./setup cuda` for the NVIDIA runtime. Stop audio before switching runtimes. The CUDA setup installs the locked CUDA 12 and cuDNN 9 Python wheels into Voicify’s own environment. The host still needs a working NVIDIA driver. Use `./setup cpu` to switch back.
-
-1. Click **Start audio**. Voicify starts muted.
-2. Pick a physical microphone or keep **Automatic microphone**. Click **Direct** and check both level meters.
-3. Choose **Voicify Virtual Microphone** as the input in the app you want to test. Use the app’s microphone test or record a short local clip in OBS.
-4. Click **Add demo voices** if the local test pack is present. Pick **Howatto**, **Sittori**, or **Kakkoii**, then click **Convert**.
-5. **Echo cancellation** uses your default playback device as the reference to clean the mic before conversion. **Extra noise filter** adds stronger background noise suppression when needed. The **CLEAN MIC** indicator shows when the filter is active.
-6. Use **Mute** to stop capture and keep the virtual mic visible. **Stop audio** removes the device and ends the background process. With headphones connected, use **Record preview** to hear what the virtual mic sends. Speak while it records, then listen to the clip. The clip stays in memory and Studio discards it when playback ends.
-
-If Auto cannot initialize CUDA, Voicify attempts CPU inference and displays the provider in use. If conversion fails, the virtual mic goes silent. **Direct** is an explicit choice.
-
-## Voice library
-
-Import standalone RVC and ContentVec/HuBERT ONNX graphs using **Import ONNX**. Choose the model’s native sample rate and speaker ID. F0-guided voices expose pitch. The three demo voices use pitch-free RVC v2 models.
-
-[Model formats and provenance](docs/models.md) · [Architecture and review](docs/engineering.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
-
-## Test and control
+Use `./setup cuda` for NVIDIA. To check or stop the engine from a terminal, run `./launch status`, `./launch mode mute`, or `./launch stop`.
 
 ```bash
-./launch status
-./launch mode mute
-./launch stop
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-For the live synthetic-audio test, stop Voicify first and set `VOICIFY_TEST_PIPEWIRE=1` before running the tests. To include neural output, install the demo with `./launch demo-voice` and pass its printed ID as `VOICIFY_TEST_MODEL`. The test uses its own tone source and leaves the physical microphone alone.
+For the live PipeWire test, stop Voicify first and set `VOICIFY_TEST_PIPEWIRE=1`. To test conversion too, run `./launch demo-voice` and set `VOICIFY_TEST_MODEL` to the ID it prints. The test uses a synthetic input.
 
-Settings and imported graphs are stored in the standard XDG config and data directories under `voicify`. The engine log is under `$XDG_STATE_HOME/voicify/engine.log` or `~/.local/state/voicify/engine.log`. The runtime socket is private to your Linux account.
-
-## Build the Fedora RPM
-
-From a committed checkout with `rpm-build` and `desktop-file-utils` installed:
+To build the RPM, install `rpm-build` and `desktop-file-utils`, then run this from a committed checkout.
 
 ```bash
 rpm_tree="$(mktemp -d)"
@@ -68,3 +75,7 @@ git archive --format=tar.gz --prefix=voicify-1.0.0/ HEAD > "$rpm_tree/SOURCES/vo
 rpmbuild --define "_topdir $rpm_tree" -bb packaging/voicify.spec
 find "$rpm_tree/RPMS" -name '*.rpm'
 ```
+
+</details>
+
+[MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
