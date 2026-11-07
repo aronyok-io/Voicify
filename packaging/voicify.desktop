@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Voicify
+Comment=Change your voice with a local virtual microphone
+Exec=voicify
+Icon=voicify
+Terminal=false
+Categories=AudioVideo;Audio;
+StartupNotify=true

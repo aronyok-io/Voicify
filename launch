@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+runtime="${VOICIFY_RUNTIME:-$PWD/.venv}"
+if [[ "${1:-}" == setup ]]; then
+    shift
+    exec ./setup "$@"
+fi
+if [[ -n "${VOICIFY_RUNTIME:-}" && ! -f "$runtime/.voicify-ready" ]]; then
+    if [[ $# -eq 0 ]]; then
+        exec /usr/bin/python3 -m voicify.runtime
+    fi
+    printf '%s
+' 'Run voicify setup cpu or voicify setup cuda first.' >&2
+    exit 1
+fi
+if [[ ! -x "$runtime/bin/python" ]]; then
+    printf '%s\n' 'Run setup cpu or setup cuda first.' >&2
+    exit 1
+fi
+if [[ $# -eq 0 ]]; then
+    exec /usr/bin/python3 -m voicify.ui
+fi
+exec "$runtime/bin/python" -m voicify "$@"

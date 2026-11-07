@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+set -euo pipefail
+app_dir="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+export VOICIFY_RUNTIME="${XDG_DATA_HOME:-$HOME/.local/share}/voicify/runtime-v1"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/voicify/uv}"
+exec "$app_dir/launch" "$@"

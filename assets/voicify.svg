@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <title>Voicify fox</title>
+  <defs>
+    <linearGradient id="tile" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#311719"/>
+      <stop offset="1" stop-color="#130c0d"/>
+    </linearGradient>
+    <linearGradient id="fur" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#f28762"/>
+      <stop offset="1" stop-color="#c04436"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="124" height="124" rx="30" fill="url(#tile)" stroke="#62302d" stroke-width="3"/>
+  <path d="M26 72 20 35q0-5 5-3l29 16h20l29-16q5-2 5 3l-6 37 6 9-14 7-11 13q-19 19-38 0L34 88l-14-7z"
+        fill="url(#fur)" stroke="#140c0d" stroke-width="3" stroke-linejoin="round"/>
+  <path d="m28 42 5 23 15-12zm72 0-5 23-15-12z" fill="#78312e"/>
+  <path d="M25 80q17-5 30 9l9 7 9-7q13-14 30-9l-12 8-9 12q-18 17-36 0l-9-12z" fill="#ffe1c3"/>
+  <path d="M42 74q5-6 11 0m22 0q6-6 11 0" fill="none" stroke="#271216" stroke-width="4" stroke-linecap="round"/>
+  <path d="M64 91c-5-5-10-5-14-2-4 3-8 4-10-1-2 8 5 13 12 11 5-1 9-4 12-6 3 2 7 5 12 6 7 2 14-3 12-11-2 5-6 4-10 1-4-3-9-3-14 2z"
+        fill="#241115"/>
+  <path d="M58 84q6-4 12 0-1 6-6 6t-6-6" fill="#241115"/>
+  <g transform="rotate(-11 64 47)">
+    <path d="M45 49l-4-27q-1-5 4-5h38q5 0 4 5l-4 27z" fill="#1b1114" stroke="#9b4740" stroke-width="2.5"/>
+    <path d="M44 39h40l-1 9H45z" fill="#a93832"/>
+    <path d="M47 22h4l2 16h-4z" fill="#513135"/>
+    <path d="M36 47q28 5 56 0" fill="none" stroke="#130b0d" stroke-width="9" stroke-linecap="round"/>
+    <path d="M37 45q27 5 54 0" fill="none" stroke="#87413b" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+</svg>

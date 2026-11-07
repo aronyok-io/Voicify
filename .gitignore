@@ -1,0 +1,10 @@
+.venv/
+demo-assets/
+.uv-cache/
+__pycache__/
+*.py[cod]
+*.onnx
+*.pth
+*.pt
+*.index
+*.wav

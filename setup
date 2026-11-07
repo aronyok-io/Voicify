@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+backend="${1:-cpu}"
+case "$backend" in
+    cpu|cuda) ;;
+    *) printf '%s\n' 'Usage: ./setup [cpu|cuda]' >&2; exit 2 ;;
+esac
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$PWD/.uv-cache}"
+export UV_PROJECT_ENVIRONMENT="${VOICIFY_RUNTIME:-${UV_PROJECT_ENVIRONMENT:-$PWD/.venv}}"
+if [[ -n "${VOICIFY_RUNTIME:-}" ]]; then
+    rm -f -- "$VOICIFY_RUNTIME/.voicify-ready"
+fi
+uv sync --locked --no-build --python 3.12 --extra "$backend"
+if [[ -n "${VOICIFY_RUNTIME:-}" ]]; then
+    touch -- "$VOICIFY_RUNTIME/.voicify-ready"
+fi
