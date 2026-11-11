@@ -13,6 +13,7 @@ jobs:
       - run: ./setup cpu
       - run: .venv/bin/python -m unittest discover -s tests
       - run: for script in launch setup packaging/voicify packaging/build-rpm; do bash -n "$script" || exit; done
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: bash packaging/build-rpm "$RUNNER_TEMP/voicify-rpm"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
