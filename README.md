@@ -10,7 +10,8 @@
   · <a href="docs/engineering.md">How it works</a>
 </p>
 
-<p align="center"><img src="assets/studio.webp" width="840" alt="Voicify Studio in black and red, with controls for the virtual mic, noise cleanup, and voice conversion"></p>
+<p align="center"><img src="assets/studio.webp" width="840" alt="Voicify Studio in dark mode with Pitch only selected"></p>
+<p align="center"><a href="assets/studio-light.webp">See Studio in light mode</a></p>
 
 ## Get on the mic
 

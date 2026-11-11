@@ -9,6 +9,7 @@ jobs:
     steps:
       - run: dnf -y install git uv rpm-build desktop-file-utils appstream python3-pyside6
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: uv python install 3.12
       - run: ./setup cpu
       - run: .venv/bin/python -m unittest discover -s tests
       - run: for script in launch setup packaging/voicify packaging/build-rpm; do bash -n "$script" || exit; done
