@@ -50,8 +50,9 @@ def main():
                                    {"encoder": args.encoder_sha, "voice": args.voice_sha})
             print(identifier)
         elif args.command in ("demo-voice", "demo-voices"):
-            from .demo import VOICES, install
-            for name in VOICES if args.command == "demo-voices" else ("Howatto",):
+            from .demo import available, install
+            names = available() if args.command == "demo-voices" else ["Howatto"]
+            for name in names or ["Howatto"]:
                 print(install(name))
         elif args.command in ("preview", "compare"):
             from .audio import preview

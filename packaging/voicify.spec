@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           voicify
-Version:        1.1.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        Local voice conversion and virtual microphone for Linux
 License:        MIT
@@ -58,6 +58,9 @@ appstreamcli validate --no-net packaging/io.github.aronyok_io.Voicify.metainfo.x
 %{_datadir}/icons/hicolor/scalable/apps/voicify.svg
 
 %changelog
+* Wed Nov 11 2026 Voicify contributors - 1.2.0-1
+- Add two AISO voices and two pitch-guided VCTK male voices.
+
 * Wed Nov 11 2026 Voicify contributors - 1.1.0-1
 - Add pitch-only processing, updated themes, and audio diagnostics.
 

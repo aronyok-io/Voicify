@@ -19,7 +19,7 @@
 2. Install it from the download directory.
 
    ```bash
-   sudo dnf install ./voicify-1.1.0-1.fc44.x86_64.rpm
+   sudo dnf install ./voicify-1.2.0-1.fc44.x86_64.rpm
    ```
 
 3. Open **Voicify** from your app menu and choose **CPU** or **NVIDIA CUDA**. First launch downloads the runtime into your user account.
@@ -38,6 +38,8 @@ Use **Record preview** with headphones to hear what the virtual mic sends. Studi
 | **Stop audio** | End the audio engine and remove the virtual mic. Closing the Studio window leaves the engine running. |
 
 ## Voice models
+
+The optional voice pack adds five AISO voices and two male VCTK voices. Download it from [Releases](https://github.com/aronyok-io/Voicify/releases/latest), extract it into the Voicify data directory, then click **Add demo voices**. The two VCTK voices support the pitch slider in Convert mode.
 
 Use **Import ONNX** to add a compatible RVC voice and ContentVec or HuBERT encoder. Set the sample rate and speaker ID to match the model. The Fedora download includes the app and installs its runtime on first launch. Bring your own ONNX graphs, or put the optional demo files in `${XDG_DATA_HOME:-$HOME/.local/share}/voicify/demo-assets` and choose **Add demo voices**. See the [model guide](docs/models.md) for supported formats and checksums.
 
