@@ -1,15 +1,16 @@
+import json
 import math
 import sys
 import time
 from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, Qt, QTimer
+from PySide6.QtCore import QProcess, QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout,
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QProgressBar, QPushButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from .config import DATA, PROFILES
@@ -19,8 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 LAUNCH = str(ROOT / "launch")
 LOGO = ROOT / "assets" / "voicify.svg"
 THEMES = {
-    "dark": ("#0c0909", "#1a1010", "#492322", "#f7edeb", "#c3a9a5", "#df655b", "#f29483", "#190707"),
-    "light": ("#f4ebe7", "#fffaf6", "#ddc1b8", "#321916", "#735752", "#9f2925", "#ab392f", "#ffffff"),
+    "dark": ("#10090c", "#221016", "#4d2633", "#fff1f3", "#cdb0b7", "#ff899c", "#ffabb8", "#260a12"),
+    "light": ("#fff7fa", "#fff3f8", "#e7cbd8", "#351c29", "#705465", "#a32959", "#a52c58", "#ffffff"),
 }
 
 
@@ -127,9 +128,15 @@ class Studio(QMainWindow):
         super().__init__()
         self.setWindowTitle("Voicify Studio")
         self.setMinimumSize(880, 700)
-        self.resize(990, 744)
-        self.setCentralWidget(QWidget())
-        root = QVBoxLayout(self.centralWidget())
+        self.resize(990, 784)
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content.setObjectName("StudioSurface")
+        scroll.setWidget(content)
+        self.setCentralWidget(scroll)
+        root = QVBoxLayout(content)
         root.setContentsMargins(30, 23, 30, 18)
         root.setSpacing(14)
         self.connected = False
@@ -217,7 +224,7 @@ class Studio(QMainWindow):
         self.device.addItem("Automatic microphone", "")
         modes = QHBoxLayout()
         group = QButtonGroup(self)
-        for value, title in (("mute", "Mute"), ("direct", "Direct"), ("convert", "Convert")):
+        for value, title in (("mute", "Mute"), ("direct", "Direct"), ("pitch", "Pitch only"), ("convert", "Convert")):
             button = QPushButton(title)
             button.setCheckable(True)
             button.clicked.connect(lambda _=False, mode=value: self.change(mode=mode))
@@ -226,7 +233,8 @@ class Studio(QMainWindow):
             self.mode_buttons[value] = button
         self.mode_buttons["mute"].setChecked(True)
         signal.addLayout(modes)
-        gain = QFormLayout()
+        gain = QGridLayout()
+        gain.setColumnStretch(1, 1)
         gain.setVerticalSpacing(7)
         self.spin(gain, "Input gain", "input_gain", 0, 200, 100, "%")
         self.spin(gain, "Output gain", "output_gain", 0, 200, 100, "%")
@@ -244,8 +252,15 @@ class Studio(QMainWindow):
         cleanup_row = QHBoxLayout()
         cleanup_row.addWidget(self.cleanup)
         cleanup_row.addWidget(self.noise_suppression)
-        cleanup_row.addWidget(self.listen, 1)
+        cleanup_row.addStretch()
         signal.addLayout(cleanup_row)
+        self.compare_button = QPushButton("Compare Direct and Convert")
+        self.compare_button.setEnabled(False)
+        self.compare_button.clicked.connect(lambda: self.preview(compare=True))
+        previews = QHBoxLayout()
+        previews.addWidget(self.listen)
+        previews.addWidget(self.compare_button, 1)
+        signal.addLayout(previews)
         signal.addStretch()
         voice = panel(right, "Voice", "Choose an RVC model and tune how it runs.")
         self.voice = self.combo(voice, "Voice model", "model")
@@ -257,12 +272,23 @@ class Studio(QMainWindow):
         self.demo.clicked.connect(lambda: self.run_import(["demo-voices"]))
         actions.addWidget(add)
         actions.addWidget(self.demo)
+        self.manage = QPushButton("Manage voice")
+        self.manage.setEnabled(False)
+        self.manage.clicked.connect(self.manage_voice)
+        actions.addWidget(self.manage)
         voice.addLayout(actions)
-        tune = QFormLayout()
+        tune = QGridLayout()
+        tune.setColumnStretch(1, 1)
         tune.setVerticalSpacing(7)
         self.combo(tune, "Compute", "backend", ("Auto", "CPU", "CUDA"))
         self.combo(tune, "Buffer", "profile", tuple(PROFILES["CPU"])).setCurrentText("Balanced")
-        self.spin(tune, "Pitch", "pitch", -24, 24, 0, " st")
+        pitch = QSlider(Qt.Orientation.Horizontal)
+        pitch.setRange(-24, 24)
+        pitch.setTracking(False)
+        pitch.setAccessibleName("Pitch in semitones")
+        pitch.valueChanged.connect(lambda value: self.change(pitch=value))
+        self.values["pitch"] = pitch
+        self.pitch_label = self.control_row(tune, "Pitch · 0 st", pitch)
         voice.addLayout(tune)
         self.credit = label("", "Muted")
         self.credit.setWordWrap(True)
@@ -272,10 +298,16 @@ class Studio(QMainWindow):
     def build_footer(self, root):
         row = QHBoxLayout()
         self.stats = label("ENGINE OFFLINE", "Eyebrow")
-        row.addWidget(self.stats, 1)
+        self.stats.setWordWrap(True)
+        root.addWidget(self.stats)
+        row.addStretch()
         self.library = QPushButton("Voice folder")
         self.library.clicked.connect(self.open_library)
         row.addWidget(self.library)
+        self.diagnostics_button = QPushButton("Audio check")
+        self.diagnostics_button.setEnabled(False)
+        self.diagnostics_button.clicked.connect(self.diagnostics)
+        row.addWidget(self.diagnostics_button)
         root.addLayout(row)
         self.message = label("Audio starts muted. Start the engine to begin.", "Muted")
         self.message.setWordWrap(True)
@@ -288,19 +320,28 @@ class Studio(QMainWindow):
             widget.addItem(option, option)
         widget.activated.connect(lambda _index: self.change(**{key: widget.currentData()}))
         self.capture_controls[key] = widget
-        if isinstance(layout, QFormLayout):
-            layout.addRow(title, widget)
+        if isinstance(layout, QGridLayout):
+            self.control_row(layout, title, widget)
         else:
             layout.addWidget(widget)
         return widget
 
+    def control_row(self, layout, title, widget):
+        row = layout.rowCount() if layout.count() else 0
+        layout.setRowMinimumHeight(row, 32)
+        caption = label(title)
+        layout.addWidget(caption, row, 0)
+        layout.addWidget(widget, row, 1)
+        return caption
+
     def spin(self, layout, title, key, low, high, default, suffix):
         widget = QSpinBox()
+        widget.setMinimumHeight(32)
         widget.setRange(low, high)
         widget.setValue(default)
         widget.setSuffix(suffix)
         widget.editingFinished.connect(lambda: self.change(**{key: widget.value()}))
-        layout.addRow(title, widget)
+        self.control_row(layout, title, widget)
         self.values[key] = widget
 
     def toggle_service(self):
@@ -330,7 +371,51 @@ class Studio(QMainWindow):
         if self.connected and self.send("update", settings=settings) is None:
             self.refresh()
 
-    def preview(self):
+    def diagnostics(self):
+        process = QProcess(self)
+        def finished(code, _status):
+            output = bytes(process.readAllStandardOutput()).decode(errors="replace")
+            if code:
+                self.notice = bytes(process.readAllStandardError()).decode(errors="replace").strip()
+            else:
+                QApplication.clipboard().setText(output)
+                report = json.loads(output)
+                apps = ", ".join(report["virtual_mic_listeners"])
+                self.notice = f"Audio check copied. Virtual mic in use by {apps}." if apps else (
+                    "Audio check copied. Choose Voicify Virtual Microphone in your recording app."
+                )
+            process.deleteLater()
+        process.finished.connect(finished)
+        process.start(LAUNCH, ["diagnostics"])
+
+    def manage_voice(self):
+        state = self.send("status")
+        if state is None:
+            return
+        selected = next((voice for voice in state["voices"] if voice["id"] == self.voice.currentData()), None)
+        if selected is None:
+            return
+        choices = ["Rename", "Save current settings"]
+        if selected.get("preset"):
+            choices.append("Load saved settings")
+        choices.append("Remove from library")
+        action, accepted = QInputDialog.getItem(self, "Manage voice", selected["name"], choices, 0, False)
+        if not accepted:
+            return
+        identifier = selected["id"]
+        if action == "Rename":
+            name, accepted = QInputDialog.getText(self, "Rename voice", "Voice name", text=selected["name"])
+            if accepted:
+                self.send("rename_voice", voice=identifier, name=name)
+        elif action == "Save current settings":
+            if self.send("save_preset", voice=identifier):
+                self.notice = "Voice settings saved."
+        elif action == "Load saved settings":
+            self.change(**selected["preset"])
+        elif QMessageBox.question(self, "Remove voice", f"Remove {selected['name']} from your library?") == QMessageBox.StandardButton.Yes:
+            self.send("remove_voice", voice=identifier)
+
+    def preview(self, compare=False):
         if self.preview_job is not None:
             self.preview_job.kill()
             return
@@ -341,11 +426,12 @@ class Studio(QMainWindow):
         process.readyReadStandardOutput.connect(self.preview_playing)
         process.finished.connect(self.preview_finished)
         process.errorOccurred.connect(self.preview_error)
-        process.start(LAUNCH, ["preview"])
+        process.start(LAUNCH, ["compare" if compare else "preview"])
 
     def preview_playing(self):
-        self.preview_job.readAllStandardOutput()
-        self.notice = "Playing your recorded preview…"
+        message = bytes(self.preview_job.readAllStandardOutput()).decode(errors="replace").strip()
+        if message:
+            self.notice = message.splitlines()[-1]
 
     def preview_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
@@ -390,7 +476,7 @@ class Studio(QMainWindow):
         self.trace.push(0)
         self.input_meter.setValue(0)
         self.output_meter.setValue(0)
-        for widget in (*self.capture_controls.values(), *self.values.values(), *self.mode_buttons.values(), self.cleanup, self.noise_suppression, self.listen):
+        for widget in (*self.capture_controls.values(), *self.values.values(), *self.mode_buttons.values(), self.cleanup, self.noise_suppression, self.listen, self.compare_button, self.manage, self.diagnostics_button):
             widget.setEnabled(False)
         self.message.setText(self.notice or "Audio starts muted. Start the engine to begin.")
 
@@ -404,16 +490,31 @@ class Studio(QMainWindow):
         fill(self.voice, choices, settings["model"])
         active = next((m for m in state["voices"] if m["id"] == settings["model"]), {})
         self.credit.setText(active.get("credit", ""))
+        self.manage.setEnabled(bool(active))
+        self.diagnostics_button.setEnabled(True)
+        self.compare_button.setEnabled(bool(active and state.get("capture_target") and not self.preview_job))
+        if state.get("input_device"):
+            self.device.setToolTip(f"Capturing {state['input_device']}")
+        else:
+            self.device.setToolTip("")
         for key, widget in self.capture_controls.items():
             widget.setEnabled(True)
             if not widget.view().isVisible():
                 widget.setCurrentIndex(max(0, widget.findData(settings[key])))
         for key, widget in self.values.items():
             widget.setEnabled(True)
-            if not widget.hasFocus() and widget.value() != settings[key]:
-                widget.setValue(settings[key])
-        self.values["pitch"].setEnabled(active.get("pitch_supported", False))
-        self.values["pitch"].setToolTip("Pitch is available with F0-guided RVC voices.")
+            if key != "pitch" and not widget.hasFocus() and widget.value() != settings[key]:
+                with QSignalBlocker(widget):
+                    widget.setValue(settings[key])
+        pitch = self.values["pitch"]
+        if not pitch.isSliderDown() and pitch.value() != settings["pitch"]:
+            with QSignalBlocker(pitch):
+                pitch.setValue(settings["pitch"])
+        value = settings["pitch"]
+        self.pitch_label.setText(f"Pitch · {value:+d} st" if value else "Pitch · 0 st")
+        pitch_only = settings["mode"] == "pitch"
+        pitch.setEnabled(pitch_only or (settings["mode"] == "convert" and active.get("pitch_supported", False)))
+        pitch.setToolTip("Adjust your microphone pitch in Pitch only mode, or use an F0-guided voice in Convert.")
         for mode, button in self.mode_buttons.items():
             button.setEnabled(mode != "convert" or bool(settings["model"]))
             button.setChecked(mode == settings["mode"])
@@ -425,7 +526,7 @@ class Studio(QMainWindow):
         self.cleanup.setEnabled(True)
         self.noise_suppression.setEnabled(self.cleanup.isChecked())
         self.listen.setEnabled(self.preview_job is not None or state["registered"] and
-                               state["state"] in ("Direct", "Converting"))
+                               state["state"] in ("Direct", "Pitch only", "Converting"))
         self.badge.setText(f"●  {state['state'].upper()}")
         self.trace.push(state["output_level"])
         for meter, key in ((self.input_meter, "input_level"), (self.output_meter, "output_level")):
@@ -509,9 +610,33 @@ class Studio(QMainWindow):
         bg, card, line, text, muted, accent, mint, ink = THEMES[self.theme_name]
         self.theme.setText("Light theme" if self.theme_name == "dark" else "Dark theme")
         self.trace.colors = THEMES[self.theme_name]
+        dark = self.theme_name == "dark"
+        start, end = ("#340a19", "#070609") if dark else ("#fbe1ec", "#fbfaff")
+        highlight = "#421624" if dark else "#ffe0ec"
+        control_end = "#161016" if dark else "#ffffff"
         QApplication.instance().setStyleSheet(f"""
             QWidget {{ background: {bg}; color: {text}; font-size: 13px; }}
-            QFrame#Card, QFrame#Hero {{ background: {card}; border: 1px solid {line}; border-radius: 18px; }}
+            QWidget#StudioSurface {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0.7,stop:0 {start},stop:1 {end});
+            }}
+            QFrame#Card, QFrame#Hero {{ border: 1px solid {line}; border-radius: 18px; }}
+            QFrame#Card {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {card},stop:1 {control_end});
+            }}
+            QFrame#Hero {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0.7,stop:0 {highlight},stop:1 {card});
+            }}
+            QScrollBar:vertical {{ width: 10px; background: {end}; margin: 3px 2px; }}
+            QScrollBar::handle:vertical {{ background: {line}; min-height: 24px; border-radius: 3px; }}
+            QScrollBar::handle:vertical:hover {{ background: {muted}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+            QSlider {{ background: transparent; }}
+            QSlider::groove:horizontal {{ height: 5px; background: {line}; border-radius: 2px; }}
+            QSlider::handle:horizontal {{
+                width: 14px; margin: -5px 0; background: {accent}; border-radius: 7px;
+            }}
+            QSlider::handle:horizontal:disabled {{ background: {muted}; }}
             QLabel, QCheckBox, SignalTrace {{ background: transparent; }}
             QLabel#Title {{ font-size: 32px; font-weight: 750; }}
             QLabel#HeroTitle {{ font-size: 26px; font-weight: 720; }}

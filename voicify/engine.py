@@ -12,6 +12,7 @@ import numpy as np
 from . import audio
 from .config import PROFILES, Settings
 from .models import read_voice
+from .pitch import PitchShift
 from .rvc import LOOKAHEAD, Converter, RVC, ort
 
 
@@ -53,6 +54,7 @@ class Engine:
             graph_available = False
             registered = False
             sink = ""
+            output_backpressure = 0
             try:
                 while not self.closing.is_set():
                     tick = time.monotonic()
@@ -91,13 +93,13 @@ class Engine:
                         try:
                             os.write(output.stdin.fileno(), block)
                         except BlockingIOError:
-                            pass
+                            output_backpressure += 1
                         except BrokenPipeError:
                             audio.stop(output)
                             output = None
                     if not registered:
                         status["state"] = "Waiting for PipeWire"
-                    self.set_status(**status)
+                    self.set_status(**status, output_backpressure=output_backpressure)
                     next_frame += .02
                     now = time.monotonic()
                     if next_frame < now - .02:
@@ -141,9 +143,9 @@ def load_converter(model, backend):
     return engine, target
 
 
-def convert(converter, block, ahead, pitch):
+def convert(converter, block, ahead, pitch, envelope):
     started = time.monotonic()
-    samples = converter.convert(block, ahead, pitch)
+    samples = converter.convert(block, ahead, pitch, envelope=envelope)
     return samples, (time.monotonic() - started) * 1000
 
 
@@ -163,9 +165,13 @@ class Pipeline:
         self.playing = False
         self.ready_at = 0.0
         self.gate = audio.Gate()
+        self.pitch_shift = PitchShift()
         self.error = ""
         self.ms = None
         self.drops = 0
+        self.capture_gaps = 0
+        self.inference_overruns = 0
+        self.output_underruns = 0
         self.last_frame = 0.0
 
     def reset(self):
@@ -181,13 +187,15 @@ class Pipeline:
         self.playing = False
         self.ready_at = 0.0
         self.gate = audio.Gate()
+        self.pitch_shift = PitchShift()
         self.error = ""
         self.ms = None
 
     def step(self, settings, source, sink=""):
         serial = source["serial"] if source else None
         reference = sink if settings.cleanup else ""
-        key = (serial, settings.mode, settings.model, settings.backend, settings.profile, settings.pitch,
+        key = (serial, settings.mode, settings.model, settings.backend, settings.profile,
+               settings.pitch if settings.mode == "convert" else None,
                settings.cleanup, reference, settings.noise_suppression)
         if key != self.key:
             self.reset()
@@ -198,7 +206,9 @@ class Pipeline:
             self.key = key
         status = {"state": "Muted", "input_level": 0.0, "output_level": 0.0, "backend": self.backend,
                   "processing_ms": self.ms, "buffer_ms": None, "drops": self.drops, "fault": self.error,
-                  "cleanup_active": False}
+                  "cleanup_active": False, "capture_target": None, "input_device": None,
+                  "capture_gaps": self.capture_gaps, "inference_overruns": self.inference_overruns,
+                  "output_underruns": self.output_underruns}
         if settings.mode == "mute":
             return audio.SILENCE, status
         if not serial:
@@ -233,16 +243,27 @@ class Pipeline:
         except (OSError, EOFError) as exc:
             self.reset()
             return audio.SILENCE, dict(status, state="Reconnecting microphone", fault=str(exc))
+        if samples is None:
+            self.capture_gaps += 1
         rms = 0.0
+        envelope = 0.0
         if samples is not None:
             self.last_frame = time.monotonic()
             np.nan_to_num(samples, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
             np.clip(samples * (settings.input_gain / 100), -1, 1, out=samples)
             rms = audio.level(samples)
-            self.gate.apply(samples, settings.gate, rms)
+            if self.converter is None:
+                self.gate.apply(samples, settings.gate, rms)
+            else:
+                envelope = self.gate.envelope(settings.gate, rms)
         if self.converter is not None:
-            samples = self.infer(samples, settings)
-        state = "Converting" if settings.mode == "convert" else "Direct"
+            samples = self.infer(samples, settings, envelope)
+        if settings.mode == "pitch":
+            if samples is None:
+                self.pitch_shift.process(np.zeros(audio.FRAME, dtype=np.float32), settings.pitch)
+            else:
+                samples = self.pitch_shift.process(samples, settings.pitch)
+        state = {"convert": "Converting", "pitch": "Pitch only", "direct": "Direct"}[settings.mode]
         if self.error:
             state = "Conversion paused"
         elif self.converter is not None and not self.playing:
@@ -252,7 +273,9 @@ class Pipeline:
                           "Echo and noise cleanup is waiting for a default output device."
                           if settings.cleanup and not reference else ""
                       ),
-                      cleanup_active=self.capture.filter is not None,
+                      cleanup_active=self.capture.filter is not None, capture_target=self.capture.target,
+                      input_device=source["label"], capture_gaps=self.capture_gaps,
+                      inference_overruns=self.inference_overruns, output_underruns=self.output_underruns,
                       buffer_ms=PROFILES[self.backend][settings.profile] if self.backend else None)
         if samples is None:
             return audio.SILENCE, status
@@ -260,7 +283,7 @@ class Pipeline:
         status["output_level"] = audio.level(samples)
         return samples.astype("<f4", copy=False).tobytes(), status
 
-    def infer(self, samples, settings):
+    def infer(self, samples, settings, envelope):
         block_frames = PROFILES[self.backend][settings.profile] // 20
         lookahead_frames = LOOKAHEAD // audio.FRAME
         if self.job is not None and self.job.done():
@@ -282,20 +305,24 @@ class Pipeline:
             if len(self.output) + block_frames > 2 * block_frames:
                 self.output.clear()
                 self.drops += 1
+                self.inference_overruns += 1
             self.output.extend(np.split(output, block_frames))
             if not self.playing and not self.ready_at:
                 self.ready_at = time.monotonic() + .04
         if samples is not None:
-            self.input.append(samples)
+            self.input.append((samples, np.broadcast_to(envelope, samples.shape)))
         limit = block_frames + lookahead_frames
         if len(self.input) > limit:
             # keep the freshest speech if inference falls behind
             self.input.popleft()
             self.drops += 1
+            self.inference_overruns += 1
         if len(self.input) == limit and self.job is None:
-            block = np.concatenate([self.input.popleft() for _ in range(block_frames)])
-            ahead = np.concatenate(self.input)
-            self.job = self.worker.submit(convert, self.converter, block, ahead, settings.pitch)
+            frames, envelopes = zip(*(self.input.popleft() for _ in range(block_frames)))
+            block = np.concatenate(frames)
+            ahead = np.concatenate([frame for frame, _ in self.input])
+            gain = np.concatenate(envelopes, dtype=np.float32)
+            self.job = self.worker.submit(convert, self.converter, block, ahead, settings.pitch, gain)
         if self.output and (self.playing or time.monotonic() >= self.ready_at):
             self.playing = True
             return self.output.popleft()
@@ -303,4 +330,5 @@ class Pipeline:
             self.playing = False
             self.ready_at = 0.0
             self.drops += 1
+            self.output_underruns += 1
         return None

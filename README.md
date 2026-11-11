@@ -18,7 +18,7 @@
 2. Install it from the download directory.
 
    ```bash
-   sudo dnf install ./voicify-1.0.0-1.fc44.x86_64.rpm
+   sudo dnf install ./voicify-1.1.0-1.fc44.x86_64.rpm
    ```
 
 3. Open **Voicify** from your app menu and choose **CPU** or **NVIDIA CUDA**. First launch downloads the runtime into your user account.
@@ -31,6 +31,7 @@ Use **Record preview** with headphones to hear what the virtual mic sends. Studi
 | Control | What it does |
 | --- | --- |
 | **Direct** | Pass your mic through with optional echo cancellation and noise filtering. |
+| **Pitch only** | Raise or lower the pitch of your mic without loading an RVC voice. |
 | **Convert** | Change your voice locally with an RVC ONNX model on CPU or NVIDIA CUDA. |
 | **Mute** | Stop mic capture while keeping the virtual mic available to other apps. |
 | **Stop audio** | End the audio engine and remove the virtual mic. Closing the Studio window leaves the engine running. |
@@ -66,14 +67,10 @@ Use `./setup cuda` for NVIDIA. To check or stop the engine from a terminal, run 
 
 For the live PipeWire test, stop Voicify first and set `VOICIFY_TEST_PIPEWIRE=1`. To test conversion too, run `./launch demo-voice` and set `VOICIFY_TEST_MODEL` to the ID it prints. The test uses a synthetic input.
 
-To build the RPM, install `rpm-build` and `desktop-file-utils`, then run this from a committed checkout.
+To build the RPM, install `rpm-build`, `desktop-file-utils`, and `appstream`, then run this from a committed checkout.
 
 ```bash
-rpm_tree="$(mktemp -d)"
-mkdir -p "$rpm_tree/SOURCES"
-git archive --format=tar.gz --prefix=voicify-1.0.0/ HEAD > "$rpm_tree/SOURCES/voicify-1.0.0.tar.gz"
-rpmbuild --define "_topdir $rpm_tree" -bb packaging/voicify.spec
-find "$rpm_tree/RPMS" -name '*.rpm'
+bash packaging/build-rpm /tmp/voicify-rpm
 ```
 
 </details>

@@ -138,6 +138,7 @@ class Capture:
                 self.cleanup_fault = "Echo and noise cleanup unavailable. Using the original mic signal."
         try:
             self.process = stream(True, target, PINNED)
+            self.target = target
         except OSError:
             stop(self.filter)
             raise
@@ -180,20 +181,26 @@ class Gate:
         self.ramp = np.linspace(0, 1, FRAME, dtype=np.float32)
         self.attack = np.minimum(self.ramp * 4, 1)
 
-    def apply(self, samples, threshold, rms):
+    def envelope(self, threshold, rms):
         if threshold == -80:
             self.gain = 0.0
             self.hold = 0
-            return samples
+            return 1.0
         # quiet syllables need less level to keep an open gate open
         trigger = threshold - 8 if self.hold else threshold
         if rms >= 10 ** (trigger / 20):
             self.hold = 7
         target = float(self.hold > 0)
         self.hold = max(0, self.hold - 1)
-        ramp = self.attack if target > self.gain else self.ramp
-        samples *= self.gain + (target - self.gain) * ramp
+        previous = self.gain
         self.gain = target
+        if previous == target:
+            return target
+        ramp = self.attack if target > previous else self.ramp
+        return previous + (target - previous) * ramp
+
+    def apply(self, samples, threshold, rms):
+        samples *= self.envelope(threshold, rms)
         return samples
 
 
@@ -216,7 +223,7 @@ def headphone_sink(name):
     return str(props["object.serial"])
 
 
-def preview():
+def preview(compare=False):
     from .control import request
 
     status = request("status")
@@ -225,7 +232,10 @@ def preview():
     sink = subprocess.check_output(["pactl", "get-default-sink"], timeout=1, text=True).strip()
     target = headphone_sink(sink)
     samples = RATE * 4
-    recording = stream(True, MIC, PINNED, samples=samples)
+    source = status.get("capture_target") if compare else MIC
+    if not source or (compare and not status["settings"]["model"]):
+        raise ValueError("Choose a voice and start Direct or Convert before comparing")
+    recording = stream(True, source, PINNED, samples=samples)
     try:
         clip, _ = recording.communicate(timeout=7)
     finally:
@@ -234,11 +244,47 @@ def preview():
         raise ValueError("The virtual microphone stopped before the preview finished")
     if not np.any(np.frombuffer(clip, dtype="<f4")):
         raise ValueError("The preview was silent. Check the input meter and try again.")
+    if compare:
+        print("Converting the recorded take…", flush=True)
+        direct, converted = compare_take(np.frombuffer(clip, dtype="<f4"), status["settings"])
+        for name, take in (("Direct", direct), ("Convert", converted)):
+            play_preview(sink, target, take.astype("<f4", copy=False).tobytes(), f"Playing {name}…")
+    else:
+        play_preview(sink, target, clip, "Playing preview…")
+
+
+def compare_take(samples, settings):
+    from .config import PROFILES
+    from .engine import load_converter
+    from .rvc import LOOKAHEAD, Converter
+
+    model, backend = load_converter(settings["model"], settings["backend"])
+    converter = Converter(model)
+    size = RATE * PROFILES[backend][settings["profile"]] // 1000
+    frames = np.pad(samples, (0, (-len(samples)) % size + LOOKAHEAD))
+    frames = np.nan_to_num(frames, nan=0, posinf=0, neginf=0)
+    np.clip(frames * (settings["input_gain"] / 100), -1, 1, out=frames)
+    gate = Gate()
+    envelope = np.concatenate([
+        np.broadcast_to(gate.envelope(settings["gate"], level(frame)), frame.shape)
+        for frame in frames.reshape(-1, FRAME)
+    ], dtype=np.float32)
+    converted = [
+        converter.convert(frames[i:i + size], frames[i + size:i + size + LOOKAHEAD],
+                          settings["pitch"], envelope=envelope[i:i + size])
+        for i in range(0, len(frames) - LOOKAHEAD, size)
+    ]
+    output_gain = settings["output_gain"] / 100
+    return (np.clip(frames[:len(samples)] * envelope[:len(samples)] * output_gain, -1, 1),
+            np.clip(np.concatenate(converted)[:len(samples)] * output_gain, -1, 1))
+
+
+def play_preview(sink, target, clip, message):
     if headphone_sink(sink) != target:
         raise ValueError("Headphones changed during recording. Try the preview again.")
 
-    # play only after capture has closed, so the preview can't feed itself
-    print("Playing preview…", flush=True)
+    # play after recording so the preview can't feed itself
+    print(message, flush=True)
     playback = stream(False, target, PINNED)
     try:
         playback.communicate(input=clip, timeout=7)
@@ -246,3 +292,18 @@ def preview():
             raise ValueError("Could not play the preview through your headphones")
     finally:
         stop(playback)
+
+
+def virtual_mic_listeners():
+    graph = json.loads(subprocess.check_output(["pw-dump"], timeout=2, stderr=subprocess.DEVNULL))
+    nodes = {entry["id"]: entry["info"]["props"] for entry in graph
+             if entry.get("type") == "PipeWire:Interface:Node"}
+    source = next((identifier for identifier, props in nodes.items() if props.get("node.name") == MIC), None)
+    listeners = set()
+    for entry in graph:
+        if entry.get("type") == "PipeWire:Interface:Link" and entry["info"]["output-node-id"] == source:
+            props = nodes.get(entry["info"]["input-node-id"], {})
+            name = props.get("application.name") or props.get("node.description") or props.get("node.name")
+            if name:
+                listeners.add(name)
+    return sorted(listeners)

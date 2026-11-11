@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.aronyok_io.Voicify</id>
+  <name>Voicify Studio</name>
+  <summary>Convert your voice through a virtual microphone</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Voicify Studio converts your microphone locally with RVC ONNX models and makes the output available to recording, calling, and gaming applications.</p>
+  </description>
+  <launchable type="desktop-id">voicify.desktop</launchable>
+  <url type="homepage">https://github.com/aronyok-io/Voicify</url>
+  <url type="bugtracker">https://github.com/aronyok-io/Voicify/issues</url>
+  <developer id="io.github.aronyok_io">
+    <name>Voicify contributors</name>
+  </developer>
+  <releases>
+    <release version="1.1.0" date="2026-11-11"/>
+    <release version="1.0.0" date="2026-11-08"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

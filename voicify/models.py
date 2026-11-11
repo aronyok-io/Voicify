@@ -120,8 +120,30 @@ def add_voice(name, encoder, synthesizer, rate, speaker, credit="", hashes=None,
     if cuda_encoder is not None:
         put_graph(cuda_hash, cuda_data)
     identifier = hashlib.sha256(json.dumps(voice, sort_keys=True).encode()).hexdigest()
-    write_json(MODELS / f"{identifier}.json", voice)
+    path = MODELS / f"{identifier}.json"
+    if not path.exists():
+        write_json(path, voice)
     return identifier
+
+
+def edit_voice(identifier, *, name=None, preset=None):
+    voice = read_voice(identifier)
+    if name is not None:
+        voice["name"] = name.strip()
+    if preset is not None:
+        from .config import Settings
+        allowed = ("pitch", "input_gain", "output_gain", "gate", "profile")
+        if set(preset) != set(allowed):
+            raise ValueError("Invalid voice preset")
+        Settings().update(preset)
+        voice["preset"] = preset
+    validate_voice(voice)
+    write_json(MODELS / f"{identifier}.json", voice)
+
+
+def remove_voice(identifier):
+    read_voice(identifier)
+    (MODELS / f"{identifier}.json").unlink()
 
 
 def voices():
@@ -132,5 +154,5 @@ def voices():
         except (OSError, ValueError, TypeError):
             continue
         result.append({"id": path.stem, "name": voice["name"], "credit": voice.get("credit", ""),
-                       "pitch_supported": voice.get("pitch_supported", True)})
+                       "pitch_supported": voice.get("pitch_supported", True), "preset": voice.get("preset")})
     return sorted(result, key=lambda item: item["name"].casefold())

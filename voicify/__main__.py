@@ -22,7 +22,7 @@ def start():
 def main():
     parser = argparse.ArgumentParser(prog="voicify")
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("start", "serve", "stop", "status", "preview"):
+    for command in ("start", "serve", "stop", "status", "preview", "compare", "diagnostics"):
         commands.add_parser(command)
     mode = commands.add_parser("mode")
     mode.add_argument("value", choices=MODES)
@@ -53,9 +53,18 @@ def main():
             from .demo import VOICES, install
             for name in VOICES if args.command == "demo-voices" else ("Howatto",):
                 print(install(name))
-        elif args.command == "preview":
+        elif args.command in ("preview", "compare"):
             from .audio import preview
-            preview()
+            preview(compare=args.command == "compare")
+        elif args.command == "diagnostics":
+            from .audio import virtual_mic_listeners
+            state = request("status")
+            fields = ("state", "registered", "input_device", "cleanup_active", "backend", "buffer_ms",
+                      "processing_ms", "capture_gaps", "inference_overruns", "output_underruns",
+                      "output_backpressure", "fault")
+            report = {key: state.get(key) for key in fields}
+            report["virtual_mic_listeners"] = virtual_mic_listeners()
+            print(json.dumps(report, indent=2))
         elif args.command == "mode":
             print(json.dumps(request("update", settings={"mode": args.value}), indent=2))
         else:

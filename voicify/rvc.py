@@ -13,6 +13,8 @@ RATE = 48000
 CONTEXT = RATE * 24 // 100
 LOOKAHEAD = FRAME * 2
 EDGE = RATE * 3 // 1000
+BLEND = RATE * 12 // 1000
+SEARCH = RATE * 5 // 1000
 F0_WINDOW = 640
 F0_HOP = 160
 RVC_INPUTS = (
@@ -80,6 +82,8 @@ class RVC:
         self.backend = backend
         self.speaker = np.array([voice["speaker"]], dtype=np.int64)
         self.rng = np.random.default_rng()
+        self.noise = None
+        self.noise_frame = None
         encoder_inputs = {item.name: item for item in self.encoder.get_inputs()}
         self.attention_mask = encoder_inputs.pop("attention_mask", None)
         if len(encoder_inputs) != 1:
@@ -105,7 +109,19 @@ class RVC:
             samples = np.sin(np.arange(length, dtype=np.float32) * (2 * np.pi * 180 / RATE)) * .05
             self.render(samples, 0)
 
-    def render(self, samples, semitones):
+    def latent(self, channels, frames, start):
+        previous = self.noise
+        overlap = 0
+        if start is not None and self.noise_frame is not None and previous.shape[1] == channels:
+            advance = start - self.noise_frame
+            if 0 < advance < previous.shape[2]:
+                overlap = min(frames, previous.shape[2] - advance)
+        tail = self.rng.standard_normal((1, channels, frames - overlap), dtype=np.float32)
+        noise = np.concatenate((previous[:, :, advance:advance + overlap], tail), axis=2) if overlap else tail
+        self.noise, self.noise_frame = noise, start
+        return noise.astype(self.dtype)
+
+    def render(self, samples, semitones, *, start=None):
         pcm = resample(samples, RATE, 16000)
         frames = len(pcm) // F0_HOP
         shape = (1,) * (len(self.encoder_input.shape) - 1) + (-1,)
@@ -132,7 +148,7 @@ class RVC:
         if "rnd" in self.inputs:
             channels = self.inputs["rnd"].shape[1]
             channels = channels if isinstance(channels, int) and 1 <= channels <= 512 else 192
-            feeds["rnd"] = self.rng.standard_normal((1, channels, frames), dtype=np.float32).astype(self.dtype)
+            feeds["rnd"] = self.latent(channels, frames, start)
         output = self.synth.run(None, feeds)[0].squeeze()
         if output.ndim != 1 or abs(len(output) - frames * self.rate // 100) > self.rate // 100 or not np.isfinite(output).all():
             raise ValueError("RVC output does not match the declared voice rate")
@@ -144,36 +160,60 @@ class Converter:
         self.engine = engine
         self.context = np.zeros(CONTEXT, dtype=np.float32)
         self.last_sample = 0.0
-        self.edge = np.linspace(0, 1, EDGE, dtype=np.float32)
+        self.last_slope = 0.0
+        phase = np.linspace(0, 1, EDGE, dtype=np.float32)
+        self.edge = (1 - phase) ** 2 * (1 + 2 * phase)
+        self.slope_edge = np.arange(EDGE, dtype=np.float32) * (1 - phase) ** 2
         self.was_active = False
+        self.frame = 0
+        self.tail = np.empty(0, dtype=np.float32)
+        self.fade = np.sin(np.linspace(0, np.pi / 2, BLEND, dtype=np.float32)) ** 2
 
-    def convert(self, block, lookahead, pitch):
+    def convert(self, block, lookahead, pitch, *, envelope):
         window = np.concatenate((self.context, block, lookahead))
         self.context = window[len(block):len(block) + CONTEXT].copy()
-        active_frames = np.any(block.reshape(-1, FRAME), axis=1)
-        if not active_frames.any():
+        start = self.frame
+        self.frame += len(block) * 100 // RATE
+        if not np.any(envelope) or not np.any(block):
             self.last_sample = 0.0
             self.was_active = False
+            self.tail = self.tail[:0]
             return np.zeros_like(block)
 
-        rendered = self.engine.render(window, pitch)
-        audio = rendered[CONTEXT:CONTEXT + len(block)].copy()
+        rendered = self.engine.render(window, pitch, start=start)
+        offset = CONTEXT
+        aligned = False
+        if self.was_active and envelope[0] > 0 and len(self.tail) == BLEND:
+            candidates = rendered[CONTEXT - SEARCH:CONTEXT + SEARCH + BLEND]
+            scores = self.alignment(candidates)
+            best = int(np.argmax(scores))
+            if scores[best] >= .75:
+                offset += best - SEARCH
+                aligned = True
+        audio = rendered[offset:offset + len(block)].copy()
         if len(audio) != len(block):
             raise ValueError("Voice returned a short audio block")
-        if self.was_active and active_frames[0]:
-            # smooth the join without mixing in audio from the previous render
-            audio[:EDGE] += (self.last_sample - audio[0]) * self.edge[::-1]
+        if aligned:
+            audio[:BLEND] = self.tail * (1 - self.fade) + audio[:BLEND] * self.fade
+        if self.was_active and envelope[0] > 0:
+            jump = self.last_sample + self.last_slope - audio[0]
+            slope = np.clip(self.last_slope - (audio[1] - audio[0]), -.001, .001)
+            audio[:EDGE] += jump * self.edge + slope * self.slope_edge
 
-        next_active = np.append(active_frames[1:], np.any(lookahead[:FRAME]))
-        for index, frame in enumerate(audio.reshape(-1, FRAME)):
-            if not active_frames[index]:
-                frame.fill(0)
-                continue
-            previous = active_frames[index - 1] if index else self.was_active
-            if not previous:
-                frame[:EDGE] *= self.edge
-            if not next_active[index]:
-                frame[-EDGE:] *= self.edge[::-1]
-        self.was_active = bool(active_frames[-1])
+        end = offset + len(block)
+        self.tail = rendered[end:end + BLEND].copy()
+        self.was_active = bool(envelope[-1] > 0)
         self.last_sample = float(audio[-1])
-        return audio
+        self.last_slope = float(audio[-1] - audio[-2])
+        return audio * envelope
+
+    def alignment(self, candidates):
+        # only blend predictions that agree on the shape of the sound
+        tail = self.tail - self.tail.mean()
+        energy = np.dot(tail, tail)
+        if energy < 1e-6 or len(candidates) != BLEND + 2 * SEARCH:
+            return np.array([-1.0])
+        sums = np.convolve(candidates, np.ones(BLEND), mode="valid")
+        power = np.convolve(candidates ** 2, np.ones(BLEND), mode="valid")
+        scale = np.sqrt(energy * np.maximum(power - sums ** 2 / BLEND, 1e-8))
+        return np.correlate(candidates, tail) / scale - .04 * abs(np.arange(len(scale)) - SEARCH) / SEARCH

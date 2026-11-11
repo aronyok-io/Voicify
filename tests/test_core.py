@@ -7,13 +7,28 @@ import json
 import numpy as np
 import onnx
 
-from voicify.audio import FRAME, Gate, headphone_sink, level
+from voicify.audio import FRAME, RATE, Gate, headphone_sink, level
 from voicify.config import Settings
 from voicify.models import asset, validate_graph
+from voicify.pitch import PitchShift
 from voicify.rvc import CONTEXT, LOOKAHEAD, Converter, estimate_pitch
 
 
 class CoreTests(unittest.TestCase):
+    def test_pitch_only_shifts_both_directions_and_bypasses_at_zero(self):
+        samples = np.sin(2 * np.pi * 250 * np.arange(RATE) / RATE).astype(np.float32)
+        for semitones, expected in ((-12, 125), (0, 250), (12, 500)):
+            shift = PitchShift()
+            result = np.concatenate([
+                shift.process(frame, semitones) for frame in samples.reshape(-1, FRAME)
+            ])
+            if semitones == 0:
+                np.testing.assert_array_equal(result, samples)
+            steady = result[RATE // 5:]
+            spectrum = np.fft.rfft(steady * np.hanning(len(steady)))
+            peak = np.argmax(abs(spectrum)) * RATE / len(steady)
+            self.assertAlmostEqual(peak, expected, delta=2)
+
     def test_configuration_rejects_unselected_voice_and_invalid_gain(self):
         for settings in ({"mode": "convert"}, {"input_gain": True}, {"pitch": 35},
                          {"model": "../voice"}, {"backend": "GPU"}):
@@ -49,18 +64,19 @@ class CoreTests(unittest.TestCase):
 
     def test_overlap_returns_one_block_and_skips_silence(self):
         class Engine:
-            def render(self, samples, pitch):
+            def render(self, samples, pitch, *, start=None):
                 return samples.copy()
 
         converter = Converter(Engine())
-        out = converter.convert(np.ones(FRAME * 4, np.float32), np.ones(LOOKAHEAD, np.float32), 0)
+        block = np.ones(FRAME * 4, np.float32)
+        out = converter.convert(block, np.ones(LOOKAHEAD, np.float32), 0, envelope=block)
         self.assertEqual(out.shape, (FRAME * 4,))
         self.assertEqual(out[-1], 1)
         self.assertEqual(converter.context.shape, (CONTEXT,))
 
     def test_chunk_join_does_not_mix_in_the_previous_prediction(self):
         class Voice:
-            def render(self, samples, pitch):
+            def render(self, samples, pitch, *, start=None):
                 out = samples.copy()
                 out[-LOOKAHEAD:] = .9
                 return out
@@ -68,23 +84,26 @@ class CoreTests(unittest.TestCase):
         converter = Converter(Voice())
         block = np.full(FRAME * 4, .2, dtype=np.float32)
         ahead = np.full(LOOKAHEAD, .2, dtype=np.float32)
-        converter.convert(block, ahead, 0)
-        result = converter.convert(block, ahead, 0)
+        converter.convert(block, ahead, 0, envelope=np.ones_like(block))
+        result = converter.convert(block, ahead, 0, envelope=np.ones_like(block))
         np.testing.assert_allclose(result, block)
 
-    def test_conversion_silences_synthesized_tails_in_quiet_frames(self):
-        class NoisyVoice:
-            def render(self, samples, pitch):
+    def test_converter_hears_quiet_context_without_sending_it_to_the_mic(self):
+        class Voice:
+            def render(self, samples, pitch, *, start=None):
+                self.input = samples
                 return np.ones_like(samples)
 
-        converter = Converter(NoisyVoice())
-        active = np.ones(FRAME, dtype=np.float32)
-        quiet = np.zeros_like(active)
-        block = np.concatenate((active, quiet, active, quiet))
-        result = converter.convert(block, np.ones(LOOKAHEAD, np.float32), 0).reshape(-1, FRAME)
-        self.assertTrue(np.any(result[0]))
-        self.assertFalse(np.any(result[[1, 3]]))
-        self.assertFalse(np.any(converter.convert(np.zeros_like(block), np.ones(LOOKAHEAD, np.float32), 0)))
+        voice = Voice()
+        converter = Converter(voice)
+        block = np.full(FRAME * 4, .005, dtype=np.float32)
+        ahead = np.full(LOOKAHEAD, .003, dtype=np.float32)
+        gain = np.repeat(np.array([1, 0, .4, 0], dtype=np.float32), FRAME)
+        result = converter.convert(block, ahead, 0, envelope=gain)
+
+        np.testing.assert_array_equal(voice.input[CONTEXT:], np.concatenate((block, ahead)))
+        np.testing.assert_array_equal(result, gain)
+        self.assertFalse(np.any(converter.convert(block, ahead, 0, envelope=np.zeros_like(block))))
 
     def test_monitor_accepts_headphones_and_rejects_speakers(self):
         sink = {"name": "built-in", "active_port": "analog-output-headphones",

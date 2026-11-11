@@ -10,7 +10,7 @@ PROFILES = {
     "CUDA": {"Quick": 80, "Balanced": 120, "Smooth": 180},
     "CPU": {"Quick": 180, "Balanced": 240, "Smooth": 360},
 }
-MODES = ("mute", "direct", "convert")
+MODES = ("mute", "direct", "pitch", "convert")
 
 
 def socket_path():

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+out=$(realpath -m "${1:?Pass the RPM build directory}")
+version=$(awk '/^Version:/ {print $2}' "$root/packaging/voicify.spec")
+mkdir -p "$out"/{SOURCES,RPMS,tmp}
+git -C "$root" archive --prefix="voicify-$version/" HEAD |
+    gzip -n > "$out/SOURCES/voicify-$version.tar.gz"
+
+rpmbuild -bb \
+    --define "_topdir $out" \
+    --define "_tmppath $out/tmp" \
+    --define '_buildhost voicify' \
+    --define 'source_date_epoch_from_changelog 1' \
+    --define 'use_source_date_epoch_as_buildtime 1' \
+    "$root/packaging/voicify.spec"
+
+cd "$out/RPMS"
+sha256sum */*.rpm > SHA256SUMS

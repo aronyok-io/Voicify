@@ -1,0 +1,19 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  fedora:
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - run: dnf -y install git uv rpm-build desktop-file-utils appstream python3-pyside6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: ./setup cpu
+      - run: .venv/bin/python -m unittest discover -s tests
+      - run: for script in launch setup packaging/voicify packaging/build-rpm; do bash -n "$script" || exit; done
+      - run: bash packaging/build-rpm "$RUNNER_TEMP/voicify-rpm"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: voicify-fedora
+          path: ${{ runner.temp }}/voicify-rpm/RPMS/
